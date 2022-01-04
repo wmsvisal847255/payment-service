@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  payment-service
+Transform:
+- AWS::Serverless-2016-10-31
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Environment of this stack of resources
+
+Mappings:
+  ResourcesName:
+    dev:
+      tableName: PaymentDev
+      tableNameArn: PaymentDevArn
+      orderTableName: OrderTripDev
+      arn: UserPoolArnDev
+    staging:
+      tableName: PaymentStaging
+      tableNameArn: PaymentStagingArn
+      orderTableName: OrderTripStaging
+      arn: UserPoolArnStaging
+    prod:
+      tableName: PaymentProd
+      tableNameArn: PaymentProdArn
+      orderTableName: OrderTripProd
+      arn: UserPoolArnProd
+
+Resources:
+  PaymentApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Environment
+      TracingEnabled: true
+      Cors: "'*'"
+      Auth:
+        DefaultAuthorizer: MyCognitoAuthorizer
+        Authorizers:
+          MyCognitoAuthorizer:
+            UserPoolArn: 
+              Fn::ImportValue: !FindInMap [ResourcesName, !Ref Environment, arn]
+
+  Payment:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.paymentHandler
+      Runtime: nodejs12.x
+      CodeUri: payment/
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !FindInMap [ResourcesName, !Ref Environment, tableName]
+        - DynamoDBCrudPolicy:
+            TableName: !FindInMap [ResourcesName, !Ref Environment, bookingTableName]
+      Environment:
+        Variables:
+          TABLE_NAME: !FindInMap [ResourcesName, !Ref Environment, tableName]
+          ORDER_TABLE_NAME: !FindInMap [ResourcesName, !Ref Environment, bookingTableName]
+      Events:
+        CreatePaymentAPI:
+          Type: Api
+          Properties:
+            Path: /payment
+            Method: POST
+            RestApiId: !Ref PaymentApi
+        UpdatePaymentAPI:
+          Type: Api
+          Properties:
+            Path: /payment/{paymentId}
+            Method: ANY
+            RestApiId: !Ref PaymentApi
+
+  PaymentTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !FindInMap [ResourcesName, !Ref Environment, tableName]
+      AttributeDefinitions:
+        - AttributeName: paymentId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: paymentId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+          StreamViewType: NEW_IMAGE
